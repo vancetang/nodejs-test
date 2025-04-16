@@ -5,6 +5,11 @@
 *.js text eol=lf
 *.ts text eol=lf
 
+# 資源檔案和配置檔案，使用 LF 行結尾
+*.yml text eol=lf
+*.yaml text eol=lf
+*.env.tpl text eol=lf
+
 # Shell 腳本，使用 LF 行結尾（Unix 環境執行）
 *.sh text eol=lf
 
