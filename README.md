@@ -20,7 +20,7 @@
     ```
 4.  設定環境變數：
     ```bash
-    cp .env.tpl .env
+    cp .env.example .env
     ```
     編輯 `.env` 檔案並設定相關參數
 
