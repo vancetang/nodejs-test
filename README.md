@@ -8,7 +8,7 @@
 
 ## 🚀 安裝
 
-1.  確保你已經安裝了 [Node.js](https://nodejs.org/) 和 npm（或 yarn）。
+1.  確保你已經安裝了 [Node.js](https://nodejs.org/) 和 yarn（或 npm）。
 2.  複製這個儲存庫：
     ```bash
     git clone <your-repository-url>
@@ -29,7 +29,7 @@
 執行以下指令來啟動伺服器：
 
 ```bash
-node index.js
+yarn start # 或者使用 yarn dev 來啟動開發模式
 ```
 
 伺服器將會在 `http://localhost:3000` 上運行。打開你的瀏覽器並訪問該網址，你應該會看到 "Hello, World!" 的訊息。
