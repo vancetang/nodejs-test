@@ -1,0 +1,11 @@
+{
+  "name": "nodejs-test",
+  "version": "1.0.0",
+  "description": "測試Node.js專案",
+  "main": "index.js",
+  "author": "Vance",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
