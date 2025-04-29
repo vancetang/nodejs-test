@@ -4,6 +4,9 @@
   "description": "測試 Node.js",
   "author": "Vance Tang",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.15.0"
+  },
   "packageManager": "pnpm@10.10.0",
   "main": "index.js",
   "scripts": {
