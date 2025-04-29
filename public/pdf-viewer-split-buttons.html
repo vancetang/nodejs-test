@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Viewer with Highlight and Notes</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        canvas { border: 1px solid #ccc; }
+        #highlight-layer { position: absolute; pointer-events: none; }
+        .highlight { background-color: rgba(255, 255, 0, 0.5); position: absolute; pointer-events: none; }
+        .note { position: absolute; background: #ffeb3b; padding: 5px; border: 1px solid #ccc; font-size: 12px; }
+        #note-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border: 1px solid #ccc; z-index: 1000; }
+        #note-modal.show { display: block; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-4">
+        <div class="flex justify-between mb-4">
+            <input type="file" id="pdf-upload" accept="application/pdf" class="p-2 border rounded">
+            <div>
+                <button id="prev-page" class="bg-blue-500 text-white px-4 py-2 rounded mr-2">上一頁</button>
+                <span id="page-info" class="mx-2">Page 1 of 1</span>
+                <button id="next-page" class="bg-blue-500 text-white px-4 py-2 rounded">下一頁</button>
+            </div>
+            <div>
+                <button id="highlight-btn" class="bg-yellow-500 text-white px-4 py-2 rounded mr-2">啟用高亮</button>
+                <button id="note-btn" class="bg-purple-500 text-white px-4 py-2 rounded mr-2">添加備註</button>
+                <button id="export-btn" class="bg-green-500 text-white px-4 py-2 rounded">匯出</button>
+            </div>
+        </div>
+        <div class="relative flex justify-center">
+            <canvas id="pdf-canvas"></canvas>
+            <div id="highlight-layer"></div>
+        </div>
+        <div id="notes-list" class="mt-4">
+            <h2 class="text-lg font-bold">備註列表</h2>
+            <ul id="notes" class="list-disc pl-5"></ul>
+        </div>
+    </div>
+
+    <!-- 備註輸入模態框 -->
+    <div id="note-modal">
+        <h3 class="text-lg font-bold mb-2">輸入備註</h3>
+        <textarea id="note-input" class="w-full p-2 border rounded" rows="4" placeholder="輸入您的備註..."></textarea>
+        <div class="mt-2">
+            <button id="save-note" class="bg-blue-500 text-white px-4 py-2 rounded mr-2">儲存</button>
+            <button id="cancel-note" class="bg-gray-500 text-white px-4 py-2 rounded">取消</button>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        const canvas = document.getElementById('pdf-canvas');
+        const context = canvas.getContext('2d');
+        const highlightLayer = document.getElementById('highlight-layer');
+        let pdfDoc = null;
+        let pageNum = 1;
+        let pageRendering = false;
+        let pageNumPending = null;
+        let scale = 1.5;
+        let highlights = [];
+        let notes = [];
+        let isHighlighting = false;
+        let isAddingNote = false;
+        let currentHighlight = null;
+        let currentNote = null;
+
+        // 上傳 PDF
+        document.getElementById('pdf-upload').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file && file.type === 'application/pdf') {
+                const arrayBuffer = await file.arrayBuffer();
+                pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
+                pageNum = 1;
+                document.getElementById('page-info').textContent = `Page 1 of ${pdfDoc.numPages}`;
+                renderPage(pageNum);
+            }
+        });
+
+        // 頁面導航
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (pageNum <= 1) return;
+            pageNum--;
+            queueRenderPage(pageNum);
+        });
+
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (pageNum >= pdfDoc.numPages) return;
+            pageNum++;
+            queueRenderPage(pageNum);
+        });
+
+        // 切換高亮模式
+        document.getElementById('highlight-btn').addEventListener('click', () => {
+            isHighlighting = !isHighlighting;
+            if (isHighlighting && isAddingNote) {
+                isAddingNote = false;
+                document.getElementById('note-btn').textContent = '添加備註';
+            }
+            document.getElementById('highlight-btn').textContent = isHighlighting ? '關閉高亮' : '啟用高亮';
+            canvas.style.cursor = isHighlighting ? 'crosshair' : 'default';
+        });
+
+        // 切換添加備註模式
+        document.getElementById('note-btn').addEventListener('click', () => {
+            isAddingNote = !isAddingNote;
+            if (isAddingNote && isHighlighting) {
+                isHighlighting = false;
+                document.getElementById('highlight-btn').textContent = '啟用高亮';
+            }
+            document.getElementById('note-btn').textContent = isAddingNote ? '關閉備註' : '添加備註';
+            canvas.style.cursor = isAddingNote ? 'text' : 'default';
+        });
+
+        // 匯出高亮與備註
+        document.getElementById('export-btn').addEventListener('click', () => {
+            if (highlights.length === 0 && notes.length === 0) {
+                alert('沒有高亮或備註可匯出！');
+                return;
+            }
+            
+            const exportData = {
+                highlights: highlights.map(h => ({
+                    page: h.page,
+                    x: h.startX,
+                    y: h.startY,
+                    width: h.width,
+                    height: h.height
+                })),
+                notes: notes.map(n => ({
+                    page: n.page,
+                    x: n.x,
+                    y: n.y,
+                    text: n.text
+                }))
+            };
+            
+            console.log('匯出數據:', exportData); // 除錯用
+            const data = JSON.stringify(exportData, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'pdf_highlights_and_notes.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // 高亮功能
+        canvas.addEventListener('mousedown', (e) => {
+            if (!pdfDoc) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (isHighlighting) {
+                // 高亮功能
+                currentHighlight = { page: pageNum, startX: x, startY: y, width: 0, height: 0 };
+
+                const onMouseMove = (e) => {
+                    currentHighlight.width = (e.clientX - rect.left) - currentHighlight.startX;
+                    currentHighlight.height = (e.clientY - rect.top) - currentHighlight.startY;
+                    renderHighlightsAndNotes();
+                };
+
+                const onMouseUp = () => {
+                    canvas.removeEventListener('mousemove', onMouseMove);
+                    canvas.removeEventListener('mouseup', onMouseUp);
+                    if (Math.abs(currentHighlight.width) > 5 && Math.abs(currentHighlight.height) > 5) {
+                        highlights.push(currentHighlight);
+                        renderHighlightsAndNotes();
+                    }
+                    currentHighlight = null;
+                };
+
+                canvas.addEventListener('mousemove', onMouseMove);
+                canvas.addEventListener('mouseup', onMouseUp);
+            } else if (isAddingNote) {
+                // 備註功能
+                currentNote = { page: pageNum, x: x, y: y, text: '' };
+                showNoteModal();
+            }
+        });
+
+        // 模態框控制
+        const noteModal = document.getElementById('note-modal');
+        const noteInput = document.getElementById('note-input');
+        const saveNoteBtn = document.getElementById('save-note');
+        const cancelNoteBtn = document.getElementById('cancel-note');
+
+        function showNoteModal() {
+            noteInput.value = '';
+            noteModal.classList.add('show');
+        }
+
+        function hideNoteModal() {
+            noteModal.classList.remove('show');
+        }
+
+        saveNoteBtn.addEventListener('click', () => {
+            if (currentNote) {
+                currentNote.text = noteInput.value.trim();
+                if (currentNote.text) {
+                    notes.push(currentNote);
+                    updateNotesList();
+                    renderHighlightsAndNotes();
+                }
+                currentNote = null;
+                hideNoteModal();
+            }
+        });
+
+        cancelNoteBtn.addEventListener('click', () => {
+            currentNote = null;
+            hideNoteModal();
+        });
+
+        // 渲染頁面
+        async function renderPage(num) {
+            pageRendering = true;
+            const page = await pdfDoc.getPage(num);
+            const viewport = page.getViewport({ scale });
+
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            highlightLayer.style.width = `${canvas.width}px`;
+            highlightLayer.style.height = `${canvas.height}px`;
+
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+            await page.render(renderContext).promise;
+            pageRendering = false;
+            document.getElementById('page-info').textContent = `Page ${num} of ${pdfDoc.numPages}`;
+
+            renderHighlightsAndNotes();
+
+            if (pageNumPending !== null) {
+                renderPage(pageNumPending);
+                pageNumPending = null;
+            }
+        }
+
+        // 排隊渲染頁面
+        function queueRenderPage(num) {
+            if (pageRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        // 渲染高亮和備註
+        function renderHighlightsAndNotes() {
+            highlightLayer.innerHTML = '';
+            
+            // 渲染高亮
+            highlights
+                .filter(h => h.page === pageNum)
+                .forEach(h => {
+                    const div = document.createElement('div');
+                    div.className = 'highlight';
+                    div.style.left = `${Math.min(h.startX, h.startX + h.width)}px`;
+                    div.style.top = `${Math.min(h.startY, h.startY + h.height)}px`;
+                    div.style.width = `${Math.abs(h.width)}px`;
+                    div.style.height = `${Math.abs(h.height)}px`;
+                    highlightLayer.appendChild(div);
+                });
+            
+            // 渲染臨時高亮 (拖拉過程中)
+            if (currentHighlight && currentHighlight.page === pageNum) {
+                const div = document.createElement('div');
+                div.className = 'highlight';
+                div.style.left = `${Math.min(currentHighlight.startX, currentHighlight.startX + currentHighlight.width)}px`;
+                div.style.top = `${Math.min(currentHighlight.startY, currentHighlight.startY + currentHighlight.height)}px`;
+                div.style.width = `${Math.abs(currentHighlight.width)}px`;
+                div.style.height = `${Math.abs(currentHighlight.height)}px`;
+                highlightLayer.appendChild(div);
+            }
+            
+            // 渲染備註
+            notes
+                .filter(n => n.page === pageNum)
+                .forEach(n => {
+                    const noteDiv = document.createElement('div');
+                    noteDiv.className = 'note';
+                    noteDiv.textContent = n.text;
+                    noteDiv.style.left = `${n.x}px`;
+                    noteDiv.style.top = `${n.y}px`;
+                    highlightLayer.appendChild(noteDiv);
+                });
+        }
+
+        // 更新備註列表
+        function updateNotesList() {
+            const notesList = document.getElementById('notes');
+            notesList.innerHTML = '';
+            notes.forEach((n, index) => {
+                const li = document.createElement('li');
+                li.textContent = `頁 ${n.page}: ${n.text}`;
+                notesList.appendChild(li);
+            });
+        }
+    </script>
+</body>
+</html>
