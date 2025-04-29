@@ -12,7 +12,8 @@
   "scripts": {
     "start": "cross-env NODE_ENV=prod node src/index.js",
     "prod": "cross-env NODE_ENV=prod node src/index.js",
-    "dev": "cross-env NODE_ENV=dev nodemon src/index.js"
+    "dev": "cross-env NODE_ENV=dev nodemon src/index.js",
+    "i18n_readme": "uv run ../gemini-test/src/i18n_tool.py --name README.md"
   },
   "dependencies": {
     "cross-env": "^7.0.3",
